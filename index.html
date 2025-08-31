@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini IDE Mobile Fullscreen</title>
+
+<!-- CodeMirror 5 -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/xml/xml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/javascript/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/css/css.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/htmlmixed/htmlmixed.min.js"></script>
+
+<style>
+:root{--gap:10px;--radius:12px}
+body{margin:0;font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial;background:#f7f8fa;color:#111}
+header{padding:12px;background:#fff;border-bottom:1px solid #ccc;position:sticky;top:0;z-index:10;display:flex;flex-wrap:wrap;gap:4px}
+header button{padding:8px 12px;border-radius:10px;border:1px solid #ccc;background:#fff;font-size:15px;touch-action:manipulation}
+header button.danger{color:#b00020;border-color:#f2c7cc;background:#fff5f6}
+main{padding:12px;display:grid;gap:12px}
+.tree{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:8px;max-height:30vh;overflow:auto}
+.tree ul{list-style:none;margin:0;padding-left:14px}
+.tree li{padding:8px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;font-size:16px;cursor:pointer}
+.tree li.selected{background:#e9f3ff;outline:2px solid #cfe6ff}
+#editorWrap{background:#fff;border:1px solid #e6e6e6;border-radius:12px;min-height:36vh;overflow:hidden}
+#editor{height:100%;min-height:36vh}
+#previewModal{display:none;position:fixed;inset:0;background:#fff;z-index:999;border:none}
+#previewModal iframe{width:100%;height:100%;border:0}
+#previewModal button{position:absolute;top:10px;right:10px;z-index:1000;padding:6px 10px;font-size:16px;border:none;border-radius:6px;background:#222;color:#fff}
+footer{text-align:center;color:#888;font-size:13px;padding:14px 0;}
+</style>
+</head>
+<body>
+
+<header>
+  <button id="btnNewFile">+ File</button>
+  <button id="btnNewFolder">+ Cartella</button>
+  <button id="btnDelete" class="danger">🗑️ Elimina selezionato</button>
+  <button id="btnPreviewToggle">Mostra Anteprima</button>
+  <button id="btnReset">♻️ Reset Interfaccia</button>
+</header>
+
+<main>
+  <div class="tree" id="tree"></div>
+  <div id="editorWrap">
+    <div id="editor"></div>
+  </div>
+</main>
+
+<div id="previewModal">
+  <button id="btnClosePreview">✖</button>
+  <iframe id="preview" sandbox="allow-scripts allow-same-origin"></iframe>
+</div>
+
+<footer>Mini IDE Mobile — salva su localStorage, anteprima fullscreen</footer>
+
+<script>
+(function(){
+  const KEY = "miniIDE_cm5_final";
+  const KEY_SEL = KEY+"_sel";
+  let project = JSON.parse(localStorage.getItem(KEY))||{root:{type:'folder',children:{}}};
+  let selectedPath = localStorage.getItem(KEY_SEL) || null;
+
+  // default file index.html
+  if(!Object.keys(project.root.children).length){
+    project.root.children["index.html"] = {type:'file', content:`<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Ciao</title></head>
+<body><h1>👋 Benvenuto!</h1><p>Modifica e apri Anteprima.</p></body>
+</html>`};
+  }
+
+  function saveProject(){ localStorage.setItem(KEY,JSON.stringify(project)); }
+  function pathToArray(path){return(!path||path==="/")?[]:path.split("/").filter(Boolean);}
+  function getNode(path){
+    if(!path||path==="/") return project.root;
+    let node = project.root;
+    for(const seg of pathToArray(path)){ if(!node||node.type!=='folder') return null; node=node.children[seg]; if(!node) return null; }
+    return node;
+  }
+  function getParentAndName(path){
+    const parts=pathToArray(path); const name=parts.pop(); let parent=project.root;
+    for(const seg of parts) parent=parent.children[seg]; return {parent,name};
+  }
+
+  // render tree
+  const treeEl = document.getElementById("tree");
+  function renderTree(){
+    treeEl.innerHTML=renderFolder(project.root,"")||'<div style="padding:8px;color:#666">Vuoto — crea un file o una cartella.</div>';
+    applySelection();
+  }
+  function renderFolder(folder, base){
+    const names = Object.keys(folder.children);
+    if(!names.length) return "<ul></ul>";
+    let out="<ul style='margin:0;padding-left:12px'>";
+    for(const n of names){
+      const c = folder.children[n]; const p = (base||"")+"/"+n;
+      if(c.type==='file') out+=`<li class="file" data-path="${p}">📄 ${n}</li>`;
+      else out+=`<li class="folder" data-path="${p}">📁 ${n}${renderFolder(c,p)}</li>`;
+    }
+    return out+"</ul>";
+  }
+  function applySelection(){ treeEl.querySelectorAll("li").forEach(li=>li.classList.toggle("selected",li.dataset.path===selectedPath)); }
+
+  treeEl.addEventListener("click",e=>{
+    const li = e.target.closest('li[data-path]'); if(!li) return;
+    selectedPath = li.dataset.path;
+    localStorage.setItem(KEY_SEL,selectedPath);
+    applySelection();
+    const node = getNode(selectedPath);
+    if(node && node.type==='file') openFile(selectedPath);
+    else clearEditor();
+  });
+
+  // editor
+  const editorHost = document.getElementById("editor");
+  const editor = CodeMirror(editorHost,{value:'',mode:'htmlmixed',lineNumbers:true,lineWrapping:true,tabSize:2,viewportMargin:Infinity});
+
+  function openFile(path){
+    const node=getNode(path); if(!node||node.type!=='file') return;
+    editor.setValue(node.content||'');
+  }
+  function clearEditor(){editor.setValue(''); updatePreview('');}
+
+  editor.on('change',()=>{if(selectedPath){const node=getNode(selectedPath); if(node&&node.type==='file'){node.content=editor.getValue(); saveProject(); updatePreview(node.content);}}});
+
+  // preview
+  const previewModal=document.getElementById('previewModal');
+  const previewIFrame=document.getElementById('preview');
+  function updatePreview(code){previewIFrame.srcdoc=code||'';}
+
+  // toolbar actions
+  document.getElementById('btnNewFile').addEventListener('click',()=>{
+    const name=prompt('Nome file?'); if(!name) return;
+    let dest = project.root; if(selectedPath){const node=getNode(selectedPath); if(node&&node.type==='folder') dest=node; else dest=project.root;}
+    if(dest.children[name]) return alert('Esiste già un elemento con questo nome.');
+    dest.children[name]={type:'file',content:''}; saveProject(); renderTree();
+  });
+
+  document.getElementById('btnNewFolder').addEventListener('click',()=>{
+    const name=prompt('Nome cartella?'); if(!name) return;
+    let dest = project.root; if(selectedPath){const node=getNode(selectedPath); if(node&&node.type==='folder') dest=node; else dest=project.root;}
+    if(dest.children[name]) return alert('Esiste già un elemento con questo nome.');
+    dest.children[name]={type:'folder',children:{}}; saveProject(); renderTree();
+  });
+
+  // ELIMINA intelligente
+  document.getElementById('btnDelete').addEventListener('click',()=>{
+    if(!selectedPath) return alert('Seleziona un file o cartella da eliminare');
+    const node = getNode(selectedPath); if(!node) return;
+
+    let msg;
+    if(node.type === 'file') msg = `Vuoi eliminare il file "${selectedPath.split("/").pop()}"?`;
+    else msg = `Vuoi eliminare la cartella "${selectedPath.split("/").pop()}" e tutto il suo contenuto?`;
+
+    if(!confirm(msg)) return;
+
+    const {parent,name} = getParentAndName(selectedPath);
+    delete parent.children[name];
+
+    saveProject();
+    selectedPath = null;
+    localStorage.removeItem(KEY_SEL);
+    renderTree();
+    clearEditor();
+  });
+
+  document.getElementById('btnPreviewToggle').addEventListener('click',()=>{
+    updatePreview(editor.getValue());
+    previewModal.style.display='block';
+  });
+
+  document.getElementById('btnClosePreview').addEventListener('click',()=>{
+    previewModal.style.display='none';
+  });
+
+  // RESET INTERFACCIA senza cancellare file
+  document.getElementById('btnReset').addEventListener('click',()=>{
+    if(!confirm('Ripristinare l’interfaccia dell’IDE?')) return;
+    selectedPath = null;
+    localStorage.removeItem(KEY_SEL);
+    editor.setValue('');
+    previewModal.style.display = 'none';
+    renderTree();
+  });
+
+  // init
+  renderTree();
+  if(selectedPath){const node=getNode(selectedPath); if(node&&node.type==='file') openFile(selectedPath);}
+  else if(project.root.children['index.html']){selectedPath='/index.html'; localStorage.setItem(KEY_SEL,selectedPath); openFile(selectedPath);}
+})();
+</script>
+
+</body>
+</html>
