@@ -34,6 +34,48 @@ footer{text-align:center;color:#888;font-size:13px;padding:14px 0;}
 /* Stile per la seconda riga di pulsanti */
 #secondToolbar {display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; background: #f0f0f0; border-bottom: 1px solid #ccc;}
 #secondToolbar button {padding: 6px 10px; border-radius: 8px; border: 1px solid #ccc; background: #fff; font-size: 14px;}
+
+/* Modal per copia confermata */
+#copyConfirmModal, #pasteModal {
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  z-index: 1000;
+  text-align: center;
+  max-width: 80%;
+}
+
+#copyConfirmModal p, #pasteModal p {
+  margin: 0 0 15px 0;
+  font-size: 16px;
+}
+
+#copyConfirmModal button, #pasteModal button {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  background: #f0f0f0;
+  font-size: 14px;
+  margin: 0 5px;
+}
+
+#pasteArea {
+  width: 100%;
+  height: 120px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-family: monospace;
+  resize: vertical;
+  margin-bottom: 15px;
+  box-sizing: border-box;
+}
 </style>
 </head>
 <body>
@@ -48,7 +90,7 @@ footer{text-align:center;color:#888;font-size:13px;padding:14px 0;}
 
 <div id="secondToolbar">
   <button id="btnSelectAll">Seleziona tutto</button>
-  <button id="btnCopy">Copia</button>
+  <button id="btnCopy">Copia tutto</button>
   <button id="btnPaste">Incolla</button>
 </div>
 
@@ -62,6 +104,20 @@ footer{text-align:center;color:#888;font-size:13px;padding:14px 0;}
 <div id="previewModal">
   <button id="btnClosePreview">✖</button>
   <iframe id="preview" sandbox="allow-scripts allow-same-origin"></iframe>
+</div>
+
+<div id="copyConfirmModal">
+  <p>Testo copiato negli appunti!</p>
+  <button id="btnCloseCopyConfirm">OK</button>
+</div>
+
+<div id="pasteModal">
+  <p>Incolla il testo qui:</p>
+  <textarea id="pasteArea" placeholder="Premi Ctrl+V o tieni premuto per incollare..."></textarea>
+  <div>
+    <button id="btnConfirmPaste">Incolla nell'editor</button>
+    <button id="btnCancelPaste">Annulla</button>
+  </div>
 </div>
 
 <footer>Mini IDE Mobile — salva su localStorage, anteprima fullscreen</footer>
@@ -202,19 +258,105 @@ footer{text-align:center;color:#888;font-size:13px;padding:14px 0;}
     editor.execCommand('selectAll');
   });
 
-  document.getElementById('btnCopy').addEventListener('click',()=>{
-    editor.focus();
-    document.execCommand('copy');
+  // Funzione migliorata per copiare testi lunghi
+  document.getElementById('btnCopy').addEventListener('click',async ()=>{
+    try {
+      const textToCopy = editor.getValue();
+      
+      // Usiamo la moderna Clipboard API se disponibile
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(textToCopy);
+        showCopyConfirm();
+      } 
+      // Fallback per browser più vecchi
+      else {
+        const textArea = document.createElement('textarea');
+        textArea.value = textToCopy;
+        textArea.style.position = 'fixed';
+        textArea.style.top = '0';
+        textArea.style.left = '0';
+        textArea.style.width = '2em';
+        textArea.style.height = '2em';
+        textArea.style.padding = '0';
+        textArea.style.border = 'none';
+        textArea.style.outline = 'none';
+        textArea.style.boxShadow = 'none';
+        textArea.style.background = 'transparent';
+        
+        document.body.appendChild(textArea);
+        textArea.select();
+        
+        try {
+          const successful = document.execCommand('copy');
+          if (successful) {
+            showCopyConfirm();
+          } else {
+            alert('Impossibile copiare il testo. Prova a selezionare e copiare manualmente.');
+          }
+        } catch (err) {
+          alert('Impossibile copiare il testo. Prova a selezionare e copiare manualmente.');
+        }
+        
+        document.body.removeChild(textArea);
+      }
+    } catch (err) {
+      alert('Errore durante la copia: ' + err.message);
+    }
   });
 
-  document.getElementById('btnPaste').addEventListener('click',async ()=>{
-    editor.focus();
+  // Modal di conferma copia
+  const copyConfirmModal = document.getElementById('copyConfirmModal');
+  function showCopyConfirm() {
+    copyConfirmModal.style.display = 'block';
+  }
+  
+  document.getElementById('btnCloseCopyConfirm').addEventListener('click', () => {
+    copyConfirmModal.style.display = 'none';
+  });
+
+  // SOLUZIONE ALTERNATIVA PER INCOLLO IN APK
+  const pasteModal = document.getElementById('pasteModal');
+  const pasteArea = document.getElementById('pasteArea');
+  
+  document.getElementById('btnPaste').addEventListener('click', () => {
+    // Mostra la modal di incolla
+    pasteModal.style.display = 'block';
+    pasteArea.value = '';
+    pasteArea.focus();
+    
+    // Suggerimento per l'utente
+    setTimeout(() => {
+      if (!pasteArea.value) {
+        pasteArea.placeholder = "Tocca a lungo nell'area e seleziona 'Incolla'";
+      }
+    }, 500);
+  });
+
+  document.getElementById('btnConfirmPaste').addEventListener('click', () => {
+    const textToPaste = pasteArea.value;
+    if (textToPaste) {
+      editor.replaceSelection(textToPaste);
+      pasteModal.style.display = 'none';
+    } else {
+      alert('Nessun testo da incollare!');
+    }
+  });
+
+  document.getElementById('btnCancelPaste').addEventListener('click', () => {
+    pasteModal.style.display = 'none';
+  });
+
+  // Tentativo automatico di incolla quando la modal si apre
+  pasteModal.addEventListener('click', async () => {
     try {
-      const text = await navigator.clipboard.readText();
-      editor.replaceSelection(text);
+      // Prova con la Clipboard API moderna
+      if (navigator.clipboard && window.isSecureContext) {
+        const text = await navigator.clipboard.readText();
+        pasteArea.value = text;
+      }
     } catch (err) {
-      // Fallback per browser che non supportano Clipboard API
-      document.execCommand('paste');
+      // Ignora gli errori - l'utente dovrà incollare manualmente
+      console.log("Impossibile accedere agli appunti automaticamente");
     }
   });
 
